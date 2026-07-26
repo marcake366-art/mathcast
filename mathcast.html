@@ -287,18 +287,23 @@
 
   // Every 45 seconds: capture one frame, ask Claude to solve it, speak the answer.
   const SCAN_INTERVAL = 45000;
-  hintEl.textContent = "Every 45 seconds it captures the screen, asks Claude to solve it, and speaks the answer out loud. Nothing to press or say.";
+  hintEl.textContent = "Every 45 seconds it captures the screen, has Claude work out arithmetic, multiple-choice, or harder conceptual questions, and speaks the answer out loud.";
 
   // ---------- ask Claude to read the frame ----------
   const VISION_PROMPT =
-    "You're watching a live frame from a video game where a math question " +
-    "(like '7 + 4' or '12 x 3') appears on screen during combat. " +
-    "If you can clearly see such a question, reply with EXACTLY two lines and nothing else: " +
-    "line 1 = the expression as plain text (e.g. '7+4'), line 2 = the final numeric answer only. " +
-    "If no clear math question is visible right now, reply with exactly: NONE";
+    "You're watching a live frame from a video game where a question appears on screen " +
+    "during combat. It could be simple arithmetic (e.g. '7 + 4'), a multiple-choice question " +
+    "(A/B/C/D), or a short college-level math/CS question (graph theory, combinatorics, proofs, etc). " +
+    "If no clear question is visible right now, reply with exactly: NONE\n\n" +
+    "Otherwise: work through it properly — for harder questions, reason step by step first, " +
+    "don't rush to guess. Then finish your reply with exactly these two lines, each starting " +
+    "with its label, and nothing after them:\n" +
+    "QUESTION_LABEL: <a short label, e.g. '7+4' or 'tree edges MC'>\n" +
+    "FINAL_ANSWER: <only what should be spoken aloud — a plain number, a single letter " +
+    "like 'B', or a short spoken-friendly phrase (say 'n minus 1', not 'n-1'). No explanation here.>";
 
   async function askClaude(frameCanvas) {
-    const base64 = frameCanvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+    const base64 = frameCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -309,7 +314,7 @@
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        max_tokens: 1000,
+        max_tokens: 1024,
         messages: [{
           role: 'user',
           content: [
@@ -327,20 +332,23 @@
   }
 
   function parseReply(raw) {
-    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-    if (!lines.length) return null;
-    if (lines[0].toUpperCase() === 'NONE') return null;
-    if (lines.length < 2) return null;
-    const expr = lines[0];
-    const num = parseFloat(lines[1].replace(/[^\d.\-]/g, ''));
-    if (isNaN(num)) return null;
-    return { expr, value: num };
+    if (!raw) return null;
+    if (raw.trim().toUpperCase() === 'NONE') return null;
+    const labelMatch = raw.match(/QUESTION_LABEL:\s*(.+)/i);
+    const answerMatch = raw.match(/FINAL_ANSWER:\s*(.+)/i);
+    if (!answerMatch) return null;
+    const expr = (labelMatch ? labelMatch[1] : 'question').trim();
+    const answer = answerMatch[1].trim().replace(/[*_`]/g, '');
+    if (!answer) return null;
+    return { expr, value: answer };
   }
 
   function speakAnswer(value) {
     if (!audioEnabled || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel(); // interrupt any prior utterance instantly
-    const utter = new SpeechSynthesisUtterance(String(value));
+    // single letter (multiple choice) reads more clearly as "answer B" than just "B"
+    const spoken = /^[A-Za-z]$/.test(value) ? ('answer ' + value) : String(value);
+    const utter = new SpeechSynthesisUtterance(spoken);
     utter.rate = 1.15;
     utter.volume = 1;
     window.speechSynthesis.speak(utter);
@@ -348,7 +356,12 @@
 
   function lockInAnswer(expr, value) {
     lastShownExpr = expr;
-    answerEl.textContent = String(value);
+    const text = String(value);
+    answerEl.textContent = text;
+    // shrink the giant font for longer (word/phrase) answers so they still fit
+    if (text.length <= 3) answerEl.style.fontSize = 'min(28vw, 220px)';
+    else if (text.length <= 8) answerEl.style.fontSize = 'min(16vw, 130px)';
+    else answerEl.style.fontSize = 'min(9vw, 72px)';
     exprEl.innerHTML = 'Claude read: <b>' + expr.replace(/\*/g,'×').replace(/\//g,'÷') + '</b>';
     answerEl.classList.remove('cast');
     void answerEl.offsetWidth; // restart animation
@@ -372,7 +385,7 @@
     const w = video.videoWidth, h = video.videoHeight;
     if (!w || !h) return null;
     // downscale for speed
-    const scale = Math.min(1, 720 / w);
+    const scale = Math.min(1, 1400 / w);
     canvas.width = w * scale;
     canvas.height = h * scale;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
