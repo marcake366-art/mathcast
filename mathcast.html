@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Mathcast — hands-free spell math</title>
+<style>
+  @font-face {
+    font-family: 'Cinzel';
+    src: local('Cinzel');
+  }
+  :root{
+    --bg: #0b0a14;
+    --panel: #15121f;
+    --panel-edge: #251f38;
+    --gold: #f2b705;
+    --violet: #7c6cf0;
+    --text: #eeeaf6;
+    --muted: #6f6885;
+    --danger: #ff5d5d;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  #app {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---------- top bar ---------- */
+  #topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--panel-edge);
+    flex-shrink: 0;
+  }
+  #title {
+    font-family: 'Cinzel', 'Georgia', serif;
+    letter-spacing: 0.08em;
+    font-size: 15px;
+    color: var(--gold);
+    text-transform: uppercase;
+  }
+  #status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  #dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  #dot.live {
+    background: var(--gold);
+    box-shadow: 0 0 8px 2px rgba(242,183,5,0.6);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+
+  /* ---------- main stage ---------- */
+  #stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    position: relative;
+    min-height: 0;
+  }
+
+  #answer-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  #answer-label {
+    font-size: 13px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  #answer {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: min(28vw, 220px);
+    line-height: 1;
+    color: var(--text);
+    text-shadow: 0 0 0 rgba(242,183,5,0);
+    transition: text-shadow 0.15s, color 0.15s;
+    font-variant-numeric: tabular-nums;
+  }
+  #answer.cast {
+    color: #fff8e6;
+    text-shadow:
+      0 0 18px rgba(242,183,5,0.9),
+      0 0 46px rgba(124,108,240,0.5);
+    animation: castPulse 0.5s ease-out;
+  }
+  @keyframes castPulse {
+    0%   { transform: scale(0.85); opacity: 0.3; }
+    60%  { transform: scale(1.04); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  #expr {
+    font-size: 16px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+    min-height: 22px;
+    text-align: center;
+    max-width: 90vw;
+    word-break: break-word;
+  }
+  #expr b { color: var(--violet); font-weight: 600; }
+
+  /* ---------- camera preview (small, corner) ---------- */
+  #camwrap {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 88px;
+    height: 66px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--panel-edge);
+    opacity: 0.85;
+    z-index: 5;
+  }
+  #camwrap.hidden { display: none; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* ---------- bottom controls ---------- */
+  #controls {
+    flex-shrink: 0;
+    padding: 18px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    border-top: 1px solid var(--panel-edge);
+  }
+  button {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 14px 22px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-edge);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:active { transform: scale(0.97); }
+  #startBtn {
+    background: var(--gold);
+    color: #1a1300;
+    border-color: var(--gold);
+    flex: 1;
+    max-width: 260px;
+  }
+  #startBtn.stop {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #2a0000;
+  }
+  #camToggle { font-size: 13px; padding: 14px 16px; }
+  button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+  #hint {
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 0 24px 14px;
+  }
+
+  #startScreen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    text-align: center;
+    gap: 18px;
+  }
+  #startScreen h1 {
+    font-family: 'Cinzel', 'Georgia', serif;
+    color: var(--gold);
+    letter-spacing: 0.06em;
+    font-size: 22px;
+    margin: 0;
+  }
+  #startScreen p {
+    color: var(--muted);
+    font-size: 14px;
+    max-width: 340px;
+    line-height: 1.5;
+    margin: 0;
+  }
+  #loadTxt { font-size: 13px; color: var(--violet); min-height: 18px; }
+  .hidden-canvas { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topbar">
+    <div id="title">Mathcast</div>
+    <div id="status"><span id="dot"></span><span id="statusText">idle</span></div>
+  </div>
+
+  <div id="stage">
+    <div id="camwrap" class="hidden"><video id="video" playsinline muted autoplay></video></div>
+    <div id="answer-wrap">
+      <div id="answer-label">answer</div>
+      <div id="answer">—</div>
+      <div id="expr">Grant camera access, point it at the screen, then tap Start.</div>
+    </div>
+  </div>
+
+  <div id="hint">Every 45 seconds it captures the screen, asks Claude to solve it, and speaks the answer out loud. Nothing to press or say.</div>
+
+  <div id="controls">
+    <button id="startBtn">Start (captures every 45s)</button>
+    <button id="audioToggle">🔊 Audio on</button>
+    <button id="camToggle">Show camera</button>
+  </div>
+</div>
+
+<canvas id="canvas" class="hidden-canvas"></canvas>
+
+<div id="startScreen">
+  <h1>⚔ Mathcast</h1>
+  <p>Runs as a real webpage, so it can use your camera freely. Paste your Anthropic API key below (from console.anthropic.com) — it's used only to call Claude directly from this page and is never saved or sent anywhere else.</p>
+  <input id="apiKeyInput" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…" style="width:100%;max-width:340px;padding:12px;border-radius:8px;border:1px solid var(--panel-edge);background:var(--panel);color:var(--text);font-size:16px;text-align:center;" />
+  <button id="beginBtn">Save key &amp; grant camera access</button>
+  <div id="loadTxt"></div>
+</div>
+
+<script>
+(function(){
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const answerEl = document.getElementById('answer');
+  const exprEl = document.getElementById('expr');
+  const startBtn = document.getElementById('startBtn');
+  const camToggle = document.getElementById('camToggle');
+  const audioToggle = document.getElementById('audioToggle');
+  let audioEnabled = true;
+  const camwrap = document.getElementById('camwrap');
+  const dot = document.getElementById('dot');
+  const statusText = document.getElementById('statusText');
+  const startScreen = document.getElementById('startScreen');
+  const beginBtn = document.getElementById('beginBtn');
+  const loadTxt = document.getElementById('loadTxt');
+  const apiKeyInput = document.getElementById('apiKeyInput');
+  const hintEl = document.getElementById('hint');
+  let apiKey = '';
+
+  let scanning = false;
+  let loopHandle = null;
+  let lastShownExpr = null;
+  let stream = null;
+  let busy = false;
+
+  // Every 45 seconds: capture one frame, ask Claude to solve it, speak the answer.
+  const SCAN_INTERVAL = 45000;
+  hintEl.textContent = "Every 45 seconds it captures the screen, asks Claude to solve it, and speaks the answer out loud. Nothing to press or say.";
+
+  // ---------- ask Claude to read the frame ----------
+  const VISION_PROMPT =
+    "You're watching a live frame from a video game where a math question " +
+    "(like '7 + 4' or '12 x 3') appears on screen during combat. " +
+    "If you can clearly see such a question, reply with EXACTLY two lines and nothing else: " +
+    "line 1 = the expression as plain text (e.g. '7+4'), line 2 = the final numeric answer only. " +
+    "If no clear math question is visible right now, reply with exactly: NONE";
+
+  async function askClaude(frameCanvas) {
+    const base64 = frameCanvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-5',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+            { type: 'text', text: VISION_PROMPT }
+          ]
+        }]
+      })
+    });
+    if (!response.ok) throw new Error('API error ' + response.status);
+    const data = await response.json();
+    const textBlock = (data.content || []).find(b => b.type === 'text');
+    if (!textBlock) return null;
+    return parseReply(textBlock.text);
+  }
+
+  function parseReply(raw) {
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return null;
+    if (lines[0].toUpperCase() === 'NONE') return null;
+    if (lines.length < 2) return null;
+    const expr = lines[0];
+    const num = parseFloat(lines[1].replace(/[^\d.\-]/g, ''));
+    if (isNaN(num)) return null;
+    return { expr, value: num };
+  }
+
+  function speakAnswer(value) {
+    if (!audioEnabled || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel(); // interrupt any prior utterance instantly
+    const utter = new SpeechSynthesisUtterance(String(value));
+    utter.rate = 1.15;
+    utter.volume = 1;
+    window.speechSynthesis.speak(utter);
+  }
+
+  function lockInAnswer(expr, value) {
+    lastShownExpr = expr;
+    answerEl.textContent = String(value);
+    exprEl.innerHTML = 'Claude read: <b>' + expr.replace(/\*/g,'×').replace(/\//g,'÷') + '</b>';
+    answerEl.classList.remove('cast');
+    void answerEl.offsetWidth; // restart animation
+    answerEl.classList.add('cast');
+    speakAnswer(value);
+  }
+
+
+
+  // ---------- camera ----------
+  async function startCamera() {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+  }
+
+  function captureFrame() {
+    const w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return null;
+    // downscale for speed
+    const scale = Math.min(1, 720 / w);
+    canvas.width = w * scale;
+    canvas.height = h * scale;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  let nextCaptureAt = 0;
+  let countdownHandle = null;
+
+  async function doCapture() {
+    if (busy) return;
+    busy = true;
+    dot.classList.add('live');
+    statusText.textContent = 'reading…';
+    try {
+      const frame = captureFrame();
+      if (frame) {
+        const result = await askClaude(frame);
+        if (result) {
+          lockInAnswer(result.expr, result.value);
+        } else {
+          exprEl.textContent = 'no question seen this round';
+        }
+      }
+    } catch (e) {
+      statusText.textContent = 'connection hiccup — will retry next round';
+    } finally {
+      busy = false;
+      dot.classList.remove('live');
+    }
+  }
+
+  function scheduleNext() {
+    nextCaptureAt = Date.now() + SCAN_INTERVAL;
+    loopHandle = setTimeout(async () => {
+      if (!scanning) return;
+      await doCapture();
+      if (scanning) scheduleNext();
+    }, SCAN_INTERVAL);
+  }
+
+  function tickCountdown() {
+    if (!scanning) return;
+    const secsLeft = Math.max(0, Math.ceil((nextCaptureAt - Date.now()) / 1000));
+    if (!busy) statusText.textContent = 'next capture in ' + secsLeft + 's';
+    countdownHandle = setTimeout(tickCountdown, 250);
+  }
+
+  // ---------- UI wiring ----------
+  beginBtn.addEventListener('click', async () => {
+    const key = apiKeyInput.value.trim();
+    if (!key) {
+      loadTxt.textContent = 'Paste your API key first.';
+      return;
+    }
+    apiKey = key;
+    beginBtn.disabled = true;
+    loadTxt.textContent = 'Requesting camera…';
+    try {
+      await startCamera();
+      startScreen.style.display = 'none';
+    } catch (err) {
+      loadTxt.textContent = 'Could not start: ' + (err.message || err);
+      beginBtn.disabled = false;
+    }
+  });
+
+  startBtn.addEventListener('click', async () => {
+    scanning = !scanning;
+    if (scanning) {
+      startBtn.textContent = 'Stop';
+      startBtn.classList.add('stop');
+      statusText.textContent = 'reading…';
+      // capture immediately on start, then every 45s after that
+      await doCapture();
+      if (scanning) {
+        scheduleNext();
+        tickCountdown();
+      }
+    } else {
+      startBtn.textContent = 'Start (captures every 45s)';
+      startBtn.classList.remove('stop');
+      dot.classList.remove('live');
+      statusText.textContent = 'idle';
+      clearTimeout(loopHandle);
+      clearTimeout(countdownHandle);
+    }
+  });
+
+  camToggle.addEventListener('click', () => {
+    const hidden = camwrap.classList.toggle('hidden');
+    camToggle.textContent = hidden ? 'Show camera' : 'Hide camera';
+  });
+
+  audioToggle.addEventListener('click', () => {
+    audioEnabled = !audioEnabled;
+    audioToggle.textContent = audioEnabled ? '🔊 Audio on' : '🔇 Audio off';
+    if (!audioEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      scanning = false;
+      clearTimeout(loopHandle);
+      startBtn.textContent = 'Start watching';
+      startBtn.classList.remove('stop');
+      dot.classList.remove('live');
+      statusText.textContent = 'paused';
+    }
+  });
+})();
+</script>
+</body>
+</html>
