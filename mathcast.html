@@ -244,6 +244,7 @@
   <div id="controls">
     <button id="startBtn">Start (captures every 45s)</button>
     <button id="audioToggle">🔊 Audio on</button>
+    <button id="testSpeechBtn">Test audio</button>
     <button id="camToggle">Show camera</button>
   </div>
 </div>
@@ -453,9 +454,20 @@
     }
   });
 
+  function unlockSpeech() {
+    if (!('speechSynthesis' in window)) return;
+    // A near-silent utterance fired synchronously inside the click handler
+    // "unlocks" audio for this page session, so later automatic speech
+    // (triggered by a timer, not a tap) isn't silently blocked by the browser.
+    const primer = new SpeechSynthesisUtterance(' ');
+    primer.volume = 0;
+    window.speechSynthesis.speak(primer);
+  }
+
   startBtn.addEventListener('click', async () => {
     scanning = !scanning;
     if (scanning) {
+      unlockSpeech();
       startBtn.textContent = 'Stop';
       startBtn.classList.add('stop');
       statusText.textContent = 'reading…';
@@ -484,6 +496,17 @@
     audioEnabled = !audioEnabled;
     audioToggle.textContent = audioEnabled ? '🔊 Audio on' : '🔇 Audio off';
     if (!audioEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  });
+
+  document.getElementById('testSpeechBtn').addEventListener('click', () => {
+    if (!('speechSynthesis' in window)) {
+      alert('This browser does not support spoken audio.');
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance('Audio is working.');
+    u.volume = 1;
+    window.speechSynthesis.speak(u);
   });
 
   document.addEventListener('visibilitychange', () => {
