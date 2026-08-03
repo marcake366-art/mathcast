@@ -296,9 +296,9 @@
     "during combat. It could be simple arithmetic (e.g. '7 + 4'), a multiple-choice question " +
     "(A/B/C/D), or a short college-level math/CS question (graph theory, combinatorics, proofs, etc). " +
     "If no clear question is visible right now, reply with exactly: NONE\n\n" +
-    "Otherwise: work through it properly — for harder questions, reason step by step first, " +
-    "don't rush to guess. Then finish your reply with exactly these two lines, each starting " +
-    "with its label, and nothing after them:\n" +
+    "Otherwise: work through it properly — for harder questions, briefly reason step by step " +
+    "(a few sentences is enough, don't over-explain), don't rush to guess. Then finish your reply " +
+    "with exactly these two lines, each starting with its label, and nothing after them:\n" +
     "QUESTION_LABEL: <a short label, e.g. '7+4' or 'tree edges MC'>\n" +
     "FINAL_ANSWER: <only what should be spoken aloud — a plain number, a single letter " +
     "like 'B', or a short spoken-friendly phrase (say 'n minus 1', not 'n-1'). No explanation here.>";
@@ -315,7 +315,7 @@
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        max_tokens: 1024,
+        max_tokens: 3000,
         messages: [{
           role: 'user',
           content: [
@@ -337,11 +337,20 @@
     if (raw.trim().toUpperCase() === 'NONE') return null;
     const labelMatch = raw.match(/QUESTION_LABEL:\s*(.+)/i);
     const answerMatch = raw.match(/FINAL_ANSWER:\s*(.+)/i);
-    if (!answerMatch) return null;
     const expr = (labelMatch ? labelMatch[1] : 'question').trim();
-    const answer = answerMatch[1].trim().replace(/[*_`]/g, '');
-    if (!answer) return null;
-    return { expr, value: answer };
+
+    if (answerMatch) {
+      const answer = answerMatch[1].trim().replace(/[*_`]/g, '');
+      if (answer) return { expr, value: answer };
+    }
+
+    // Fallback: response got cut off or skipped the marker format.
+    // Grab the last non-empty line rather than reporting total silence.
+    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return null;
+    const last = lines[lines.length - 1].replace(/^(QUESTION_LABEL|FINAL_ANSWER):\s*/i, '').replace(/[*_`]/g, '').trim();
+    if (!last) return null;
+    return { expr, value: last };
   }
 
   function speakAnswer(value) {
