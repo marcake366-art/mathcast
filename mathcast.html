@@ -377,21 +377,25 @@
 
   let currentAnswerId = 0;
   const REPEAT_PAUSE_MS = 1800; // gap between repeats while waiting for the next capture
+  const LONG_ANSWER_WORD_THRESHOLD = 15;
+  const LONG_ANSWER_EXTRA_MS = 30000; // extra breathing room on top of the normal interval
+  const MIN_LONG_ANSWER_REPEATS = 3;
+  let currentCaptureDelay = SCAN_INTERVAL;
 
-  function speakAnswer(value, answerId) {
+  function speakAnswer(value, answerId, rate) {
     if (!audioEnabled || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel(); // interrupt any prior utterance instantly
     // single letter (multiple choice) reads more clearly as "answer B" than just "B"
     const spoken = /^[A-Za-z]$/.test(value) ? ('answer ' + value) : String(value);
     const utter = new SpeechSynthesisUtterance(spoken);
-    utter.rate = 1.1;
+    utter.rate = rate || 1.1;
     utter.volume = 1;
     utter.onend = () => {
       // only keep looping if this is still the current answer and we're still running
       if (answerId === currentAnswerId && scanning && audioEnabled) {
         setTimeout(() => {
           if (answerId === currentAnswerId && scanning && audioEnabled) {
-            speakAnswer(value, answerId);
+            speakAnswer(value, answerId, rate);
           }
         }, REPEAT_PAUSE_MS);
       }
@@ -412,7 +416,23 @@
     answerEl.classList.remove('cast');
     void answerEl.offsetWidth; // restart animation
     answerEl.classList.add('cast');
-    speakAnswer(value, currentAnswerId);
+
+    const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+    const isLong = wordCount > LONG_ANSWER_WORD_THRESHOLD;
+    const rate = isLong ? 0.82 : 1.1; // slower for long proofs, so it's easier to write down
+
+    if (isLong) {
+      // rough estimate of how long one read-through takes at this rate, so we can
+      // guarantee at least 3 full repeats fit before the next capture fires
+      const wordsPerSec = 2.3 * rate;
+      const estSpeakMs = (wordCount / wordsPerSec) * 1000;
+      const cycleMs = estSpeakMs + REPEAT_PAUSE_MS;
+      currentCaptureDelay = Math.max(SCAN_INTERVAL + LONG_ANSWER_EXTRA_MS, cycleMs * MIN_LONG_ANSWER_REPEATS);
+    } else {
+      currentCaptureDelay = SCAN_INTERVAL;
+    }
+
+    speakAnswer(value, currentAnswerId, rate);
   }
 
 
@@ -490,12 +510,13 @@
   }
 
   function scheduleNext() {
-    nextCaptureAt = Date.now() + SCAN_INTERVAL;
+    const delay = currentCaptureDelay;
+    nextCaptureAt = Date.now() + delay;
     loopHandle = setTimeout(async () => {
       if (!scanning) return;
       await doCapture();
       if (scanning) scheduleNext();
-    }, SCAN_INTERVAL);
+    }, delay);
   }
 
   function tickCountdown() {
