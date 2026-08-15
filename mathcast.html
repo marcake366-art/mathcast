@@ -288,20 +288,40 @@
 
   // Every 45 seconds: capture one frame, ask Claude to solve it, speak the answer.
   const SCAN_INTERVAL = 45000;
-  hintEl.textContent = "Every 45 seconds it captures the screen, has Claude work out arithmetic, multiple-choice, or harder conceptual questions, and speaks the answer out loud.";
+  hintEl.textContent = "Every 45 seconds it captures the screen, has Claude work out arithmetic, multiple-choice, or harder conceptual questions, and speaks the answer out loud. Press Space (or your clicker) anytime to trigger an instant capture and reset the 45s timer.";
 
   // ---------- ask Claude to read the frame ----------
   const VISION_PROMPT =
     "You're watching a live frame from a video game where a question appears on screen " +
     "during combat. It could be simple arithmetic (e.g. '7 + 4'), a multiple-choice question " +
-    "(A/B/C/D), or a short college-level math/CS question (graph theory, combinatorics, proofs, etc). " +
+    "(A/B/C/D), or a college-level math/CS question requiring a full worked answer or short proof " +
+    "(graph theory, linear algebra, combinatorics, etc) — sometimes with an accompanying diagram, " +
+    "graph, or figure. " +
     "If no clear question is visible right now, reply with exactly: NONE\n\n" +
-    "Otherwise: work through it properly — for harder questions, briefly reason step by step " +
-    "(a few sentences is enough, don't over-explain), don't rush to guess. Then finish your reply " +
-    "with exactly these two lines, each starting with its label, and nothing after them:\n" +
-    "QUESTION_LABEL: <a short label, e.g. '7+4' or 'tree edges MC'>\n" +
-    "FINAL_ANSWER: <only what should be spoken aloud — a plain number, a single letter " +
-    "like 'B', or a short spoken-friendly phrase (say 'n minus 1', not 'n-1'). No explanation here.>";
+    "If a diagram/graph/figure is part of the question but it's too small, blurry, or low-resolution " +
+    "for you to confidently read its actual details (node labels, edge weights, axis values, plotted " +
+    "points, etc) — don't guess. Reply with exactly: NEEDS_ZOOM\n\n" +
+    "Otherwise: work through it properly, reasoning step by step before answering — don't rush " +
+    "to guess. Then finish your reply with exactly these two lines, each starting with its label, " +
+    "and nothing after them:\n" +
+    "QUESTION_LABEL: <a short label, e.g. '7+4' or 'basis for W proof'>\n" +
+    "FINAL_ANSWER: <exactly what should be read out loud to the player>\n\n" +
+    "For FINAL_ANSWER: if it's simple arithmetic or multiple choice, keep it short (a plain number, " +
+    "or a single letter like 'B'). If it genuinely requires a full worked answer or proof, write it " +
+    "in a concise, dictation style — like something read aloud for someone to write down as a proof, " +
+    "not a chatty explanation. Specifically:\n" +
+    "  - No throat-clearing or filler ('so basically', 'what this means is') — go straight into the " +
+    "structure.\n" +
+    "  - Label the moves clearly ('Base case:', 'Inductive step:', 'Claim:', 'Therefore:') so it can be " +
+    "transcribed in the right shape without reorganizing.\n" +
+    "  - Say notation the way you'd read it aloud for someone transcribing it exactly — e.g. 'n minus 1', " +
+    "'open paren k plus 1 close paren', 'the vectors are linearly independent'. Spell out matrices/vectors " +
+    "in words rather than using brackets/LaTeX.\n" +
+    "  - Keep it as short as the proof allows — every sentence should be a real step, nothing restated " +
+    "or padded.\n" +
+    "  - End with 'Q E D.' for proofs, or the final result plainly stated otherwise.\n" +
+    "Never use markdown, LaTeX, or unpronounceable symbols in FINAL_ANSWER, since it will be spoken by " +
+    "text-to-speech, not displayed.";
 
   async function askClaude(frameCanvas) {
     const base64 = frameCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
@@ -315,7 +335,7 @@
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        max_tokens: 3000,
+        max_tokens: 4096,
         messages: [{
           role: 'user',
           content: [
@@ -334,7 +354,9 @@
 
   function parseReply(raw) {
     if (!raw) return null;
-    if (raw.trim().toUpperCase() === 'NONE') return null;
+    const trimmed = raw.trim().toUpperCase();
+    if (trimmed === 'NONE') return null;
+    if (trimmed === 'NEEDS_ZOOM' || trimmed.startsWith('NEEDS_ZOOM')) return { needsZoom: true };
     const labelMatch = raw.match(/QUESTION_LABEL:\s*(.+)/i);
     const answerMatch = raw.match(/FINAL_ANSWER:\s*(.+)/i);
     const expr = (labelMatch ? labelMatch[1] : 'question').trim();
@@ -353,19 +375,33 @@
     return { expr, value: last };
   }
 
-  function speakAnswer(value) {
+  let currentAnswerId = 0;
+  const REPEAT_PAUSE_MS = 1800; // gap between repeats while waiting for the next capture
+
+  function speakAnswer(value, answerId) {
     if (!audioEnabled || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel(); // interrupt any prior utterance instantly
     // single letter (multiple choice) reads more clearly as "answer B" than just "B"
     const spoken = /^[A-Za-z]$/.test(value) ? ('answer ' + value) : String(value);
     const utter = new SpeechSynthesisUtterance(spoken);
-    utter.rate = 1.15;
+    utter.rate = 1.1;
     utter.volume = 1;
+    utter.onend = () => {
+      // only keep looping if this is still the current answer and we're still running
+      if (answerId === currentAnswerId && scanning && audioEnabled) {
+        setTimeout(() => {
+          if (answerId === currentAnswerId && scanning && audioEnabled) {
+            speakAnswer(value, answerId);
+          }
+        }, REPEAT_PAUSE_MS);
+      }
+    };
     window.speechSynthesis.speak(utter);
   }
 
   function lockInAnswer(expr, value) {
     lastShownExpr = expr;
+    currentAnswerId++; // invalidates any in-flight repeat loop from the previous answer
     const text = String(value);
     answerEl.textContent = text;
     // shrink the giant font for longer (word/phrase) answers so they still fit
@@ -376,7 +412,7 @@
     answerEl.classList.remove('cast');
     void answerEl.offsetWidth; // restart animation
     answerEl.classList.add('cast');
-    speakAnswer(value);
+    speakAnswer(value, currentAnswerId);
   }
 
 
@@ -402,6 +438,24 @@
     return canvas;
   }
 
+  // Digital zoom: re-captures fresh from the live video (in case it's shifted
+  // slightly), cropped to the center region and enlarged, so small graph/diagram
+  // details become readable without you touching anything.
+  function captureZoomedFrame(zoomFactor) {
+    const w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) return null;
+    const cropW = w / zoomFactor;
+    const cropH = h / zoomFactor;
+    const cropX = (w - cropW) / 2;
+    const cropY = (h - cropH) / 2;
+    const outW = Math.min(1400, w);
+    const outH = outW * (cropH / cropW);
+    canvas.width = outW;
+    canvas.height = outH;
+    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, outW, outH);
+    return canvas;
+  }
+
   let nextCaptureAt = 0;
   let countdownHandle = null;
 
@@ -413,11 +467,18 @@
     try {
       const frame = captureFrame();
       if (frame) {
-        const result = await askClaude(frame);
-        if (result) {
+        let result = await askClaude(frame);
+        if (result && result.needsZoom) {
+          statusText.textContent = 'zooming in on the graph…';
+          const zoomed = captureZoomedFrame(1.8);
+          if (zoomed) result = await askClaude(zoomed);
+        }
+        if (result && !result.needsZoom) {
           lockInAnswer(result.expr, result.value);
-        } else {
+        } else if (!result) {
           exprEl.textContent = 'no question seen this round';
+        } else {
+          exprEl.textContent = 'graph still unclear even zoomed in — try adjusting the camera angle';
         }
       }
     } catch (e) {
@@ -443,6 +504,27 @@
     if (!busy) statusText.textContent = 'next capture in ' + secsLeft + 's';
     countdownHandle = setTimeout(tickCountdown, 250);
   }
+
+  const MANUAL_TRIGGER_KEY = ' '; // spacebar — set your clicker to send this
+
+  async function manualTrigger() {
+    if (!scanning || busy) return; // ignore presses before Start, or mid-capture
+    // cancel the pending scheduled capture and restart the 45s clock from now
+    clearTimeout(loopHandle);
+    clearTimeout(countdownHandle);
+    await doCapture();
+    if (scanning) {
+      scheduleNext();
+      tickCountdown();
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== MANUAL_TRIGGER_KEY && e.code !== 'Space') return;
+    if (startScreen.style.display !== 'none') return; // camera not granted yet
+    e.preventDefault();
+    manualTrigger();
+  });
 
   // ---------- UI wiring ----------
   beginBtn.addEventListener('click', async () => {
@@ -493,6 +575,8 @@
       statusText.textContent = 'idle';
       clearTimeout(loopHandle);
       clearTimeout(countdownHandle);
+      currentAnswerId++; // invalidate any pending repeat loop
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     }
   });
 
