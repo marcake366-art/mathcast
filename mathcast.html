@@ -288,7 +288,7 @@
 
   // Every 45 seconds: capture one frame, ask Claude to solve it, speak the answer.
   const SCAN_INTERVAL = 45000;
-  hintEl.textContent = "Every 45 seconds it captures the screen, has Claude work out arithmetic, multiple-choice, or harder conceptual questions, and speaks the answer out loud. Press Space (or your clicker) anytime to trigger an instant capture and reset the 45s timer.";
+  hintEl.textContent = "Every 45 seconds it captures the screen, has Claude work out arithmetic, multiple-choice, or harder conceptual questions, and speaks the answer out loud. Fully automatic — nothing to press or say.";
 
   // ---------- ask Claude to read the frame ----------
   const VISION_PROMPT =
@@ -531,27 +531,6 @@
     countdownHandle = setTimeout(tickCountdown, 250);
   }
 
-  const MANUAL_TRIGGER_KEY = ' '; // spacebar — set your clicker to send this
-
-  async function manualTrigger() {
-    if (!scanning || busy) return; // ignore presses before Start, or mid-capture
-    // cancel the pending scheduled capture and restart the 45s clock from now
-    clearTimeout(loopHandle);
-    clearTimeout(countdownHandle);
-    await doCapture();
-    if (scanning) {
-      scheduleNext();
-      tickCountdown();
-    }
-  }
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== MANUAL_TRIGGER_KEY && e.code !== 'Space') return;
-    if (startScreen.style.display !== 'none') return; // camera not granted yet
-    e.preventDefault();
-    manualTrigger();
-  });
-
   // ---------- UI wiring ----------
   beginBtn.addEventListener('click', async () => {
     const key = apiKeyInput.value.trim();
@@ -632,10 +611,11 @@
     if (document.hidden) {
       scanning = false;
       clearTimeout(loopHandle);
-      startBtn.textContent = 'Start watching';
+      clearTimeout(countdownHandle);
+      startBtn.textContent = 'Start (captures every 45s)';
       startBtn.classList.remove('stop');
       dot.classList.remove('live');
-      statusText.textContent = 'paused';
+      statusText.textContent = 'idle';
     }
   });
 })();
