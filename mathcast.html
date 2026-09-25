@@ -296,11 +296,18 @@
     "screen AT THE SAME TIME during combat — check carefully for more than one. Each could be " +
     "simple arithmetic (e.g. '7 + 4'), multiple choice (A/B/C/D), or a college-level math/CS " +
     "question — sometimes with an accompanying diagram, graph, or figure.\n\n" +
-    "If no clear question is visible right now, reply with exactly: NONE\n\n" +
-    "If a diagram/graph/figure is part of a question but too small, blurry, or low-resolution for " +
-    "you to confidently read its actual details — don't guess. Reply with exactly: NEEDS_ZOOM\n\n" +
-    "Otherwise: solve EVERY distinct question visible in the frame, not just one. Reason each one " +
-    "out internally, but DO NOT show any of that reasoning in your reply — no steps, no working, " +
+    "You may also be given one or two earlier frames captured a short time before the current one, " +
+    "clearly labeled as context. Use them only to fill in information that's no longer visible now " +
+    "(e.g. a graph shown a moment ago that the question in the current frame refers to, even though " +
+    "the graph itself has since scrolled off screen). Stitch information across frames when needed, " +
+    "but only ANSWER questions that are actually visible in the CURRENT frame — never re-answer or " +
+    "restate something that was only present in an older context frame.\n\n" +
+    "If no clear question is visible in the CURRENT frame right now, reply with exactly: NONE\n\n" +
+    "If a diagram/graph/figure relevant to a current question is too small, blurry, or low-resolution " +
+    "(in both the current and any context frames) for you to confidently read its actual details — " +
+    "don't guess. Reply with exactly: NEEDS_ZOOM\n\n" +
+    "Otherwise: solve EVERY distinct question visible in the CURRENT frame, not just one. Reason each " +
+    "one out internally, but DO NOT show any of that reasoning in your reply — no steps, no working, " +
     "no explanation, for any question no matter how hard. For each question output only this pair " +
     "of lines, one pair per question, in the order they appear on screen, with nothing else before, " +
     "between, or after any of the pairs:\n" +
@@ -311,9 +318,34 @@
     "use markdown, LaTeX, or unpronounceable symbols in FINAL_ANSWER, since it's spoken, not displayed.";
 
   const FETCH_TIMEOUT_MS = 25000; // hard cap so a hung request can never freeze the whole loop
+  const FRAME_HISTORY_SIZE = 2; // how many prior captures are kept as context
 
-  async function askClaude(frameCanvas) {
-    const base64 = frameCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+  let frameHistory = []; // oldest first, base64 jpeg strings
+
+  function canvasToBase64(canvasEl) {
+    return canvasEl.toDataURL('image/jpeg', 0.9).split(',')[1];
+  }
+
+  async function askClaude(currentBase64) {
+    const content = [];
+
+    if (frameHistory.length) {
+      content.push({
+        type: 'text',
+        text: 'CONTEXT ONLY — the following ' + frameHistory.length + ' image(s) are screen captures ' +
+              'from shortly before the current one, oldest first. Do not answer anything from these ' +
+              'alone; use them only to help interpret the current frame below.'
+      });
+      frameHistory.forEach((b64, i) => {
+        content.push({ type: 'text', text: 'Context frame ' + (i + 1) + ' of ' + frameHistory.length + ':' });
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } });
+      });
+    }
+
+    content.push({ type: 'text', text: 'CURRENT FRAME — answer only what is visible here:' });
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: currentBase64 } });
+    content.push({ type: 'text', text: VISION_PROMPT });
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
@@ -329,13 +361,7 @@
         body: JSON.stringify({
           model: 'claude-sonnet-5',
           max_tokens: 2048,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
-              { type: 'text', text: VISION_PROMPT }
-            ]
-          }]
+          messages: [{ role: 'user', content }]
         })
       });
       if (!response.ok) throw new Error('API error ' + response.status);
@@ -492,12 +518,18 @@
     try {
       const frame = captureFrame();
       if (frame) {
-        let result = await askClaude(frame);
+        const currentBase64 = canvasToBase64(frame);
+        let result = await askClaude(currentBase64);
         if (result && result.needsZoom) {
           statusText.textContent = 'zooming in on the graph…';
           const zoomed = captureZoomedFrame(1.8);
-          if (zoomed) result = await askClaude(zoomed);
+          if (zoomed) result = await askClaude(canvasToBase64(zoomed));
         }
+
+        // this round's frame becomes context for the next round, regardless of outcome
+        frameHistory.push(currentBase64);
+        if (frameHistory.length > FRAME_HISTORY_SIZE) frameHistory.shift();
+
         if (result && result.items && result.items.length) {
           lockInAnswers(result.items);
         } else if (!result) {
@@ -581,6 +613,7 @@
       clearTimeout(loopHandle);
       clearTimeout(countdownHandle);
       currentAnswerId++; // invalidate any pending repeat loop
+      frameHistory = [];
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     }
   });
